@@ -11,44 +11,37 @@
 #   "sounddevice",
 #   "soundfile",
 #   "markdown",
+#   "anthropic",
 # ]
 # ///
 
 """
+# Voice to Claude API
 
-
-
-# Voice to Claude Code
-
-A voice-enabled Claude Code assistant that allows you to interact with Claude Code using voice commands.
+A voice-enabled Claude assistant that allows you to interact with the Claude API using voice commands.
 This tool combines RealtimeSTT for speech recognition and OpenAI TTS for speech output.
 
 ## Features
 - Real-time speech recognition using RealtimeSTT
-- Claude Code integration for programmable AI coding
+- Claude API integration for AI assistance
 - Text-to-speech responses using OpenAI TTS
 - Conversation history tracking
 - Voice trigger activation
 
-
-
-
-
-
 ## Requirements
 - OpenAI API key (for TTS)
-- Anthropic API key (for Claude Code)
+- Anthropic API key (for Claude)
 - Python 3.9+
 - UV package manager (for dependency management)
 
 ## Usage
 Run the script:
 ```bash
-./voice_to_claude_code.py
+./voice_to_claude_api.py
 ```
 
 Speak to the assistant using the trigger word "Athena" in your query.
-For example: "Hey Athena, create a simple hello world script"
+For example: "Hey Athena, what's the weather like today?"
 
 Press Ctrl+C to exit.
 """
@@ -77,6 +70,7 @@ import openai
 from openai import OpenAI
 from RealtimeSTT import AudioToTextRecorder
 import logging
+import anthropic
 
 # Configuration - default values
 TRIGGER_WORDS = ["athena", "athina", "athene", "atina", "hey athena", "hey a thing", "a theme"]  # List of possible trigger variations
@@ -86,17 +80,11 @@ TTS_VOICE = "nova"  # Options: alloy, echo, fable, onyx, nova, shimmer
 # Audio device configuration - using confirmed working devices
 INPUT_DEVICE = "Scarlett 2i2 4th Gen"  # Your audio interface microphone
 OUTPUT_DEVICE = "Razer Leviathan V2"  # Your speaker system
-INPUT_DEVICE_INDEX = 1  # Set this to the index you confirmed working in test_mic.py
-OUTPUT_DEVICE_INDEX = 3  # Set this to the index you confirmed working in test_speaker.py
-DEFAULT_CLAUDE_TOOLS = [
-    "Bash",
-    "Edit",
-    "Write",
-    "GlobTool",
-    "GrepTool",
-    "LSTool",
-    "Replace",
-]
+INPUT_DEVICE_INDEX = 1  # Set this to the index you confirmed working
+OUTPUT_DEVICE_INDEX = 3  # Set this to the index you confirmed working
+
+# Claude model configuration
+CLAUDE_MODEL = "claude-3-sonnet-20240229"  # Latest stable model
 
 # Prompt templates
 COMPRESS_PROMPT = """
@@ -118,18 +106,6 @@ Original text:
 Return only the compressed text, without any explanation or introduction.
 """
 
-CLAUDE_PROMPT = """
-# Voice-Enabled Claude Code Assistant
-
-You are a helpful assistant that's being used via voice commands. Execute the user's request using your tools.
-
-When asked to read files, return the entire file content.
-
-{formatted_history}
-
-Now help the user with their latest request.
-"""
-
 # Initialize logging
 logging.basicConfig(
     level=logging.INFO,
@@ -137,7 +113,7 @@ logging.basicConfig(
     datefmt="[%X]",
     handlers=[RichHandler(rich_tracebacks=True)],
 )
-log = logging.getLogger("claude_code_assistant")
+log = logging.getLogger("claude_voice_assistant")
 
 # Suppress RealtimeSTT logs and all related loggers
 logging.getLogger("RealtimeSTT").setLevel(logging.ERROR)
@@ -147,10 +123,9 @@ logging.getLogger("audio_recorder").setLevel(logging.ERROR)
 logging.getLogger("whisper").setLevel(logging.ERROR)
 logging.getLogger("faster_whisper.transcribe").setLevel(logging.ERROR)
 logging.getLogger("openai").setLevel(logging.ERROR)
-logging.getLogger("openai.http_client").setLevel(
-    logging.ERROR
-)  # Suppress HTTP request logging
-logging.getLogger("openai._client").setLevel(logging.ERROR)  # Suppress client logging
+logging.getLogger("openai.http_client").setLevel(logging.ERROR)
+logging.getLogger("openai._client").setLevel(logging.ERROR)
+logging.getLogger("anthropic").setLevel(logging.ERROR)
 
 console = Console()
 
@@ -168,18 +143,18 @@ if missing_vars:
     sys.exit(1)
 
 # Initialize OpenAI client for TTS
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
+# Initialize Anthropic client for Claude
+anthropic_client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
-
-
-class ClaudeCodeAssistant:
+class ClaudeVoiceAssistant:
     def __init__(
         self,
         conversation_id: Optional[str] = None,
         initial_prompt: Optional[str] = None,
     ):
-        log.info("Initializing Claude Code Assistant")
+        log.info("Initializing Claude Voice Assistant")
         self.recorder = None
         self.initial_prompt = initial_prompt
 
@@ -276,19 +251,32 @@ class ClaudeCodeAssistant:
 
         log.info(f"STT recorder initialized with model {STT_MODEL}")
 
-    def format_conversation_history(self) -> str:
-        """Format the conversation history in the required format"""
+    def format_messages_for_claude(self) -> List[Dict]:
+        """Format the conversation history for Claude API"""
         if not self.conversation_history:
-            return ""
+            return []
 
-        formatted_history = "# Conversation History\n\n"
-
+        # Convert our YAML format to Claude's message format
+        claude_messages = []
+        
         for entry in self.conversation_history:
-            role = entry["role"].capitalize()
+            role = entry["role"]
             content = entry["content"]
-            formatted_history += f"## {role}\n{content}\n\n"
-
-        return formatted_history
+            
+            # Map our roles to Claude's expected roles
+            if role == "user":
+                claude_role = "user"
+            elif role == "assistant":
+                claude_role = "assistant"
+            else:
+                continue  # Skip unknown roles
+                
+            claude_messages.append({
+                "role": claude_role,
+                "content": content
+            })
+            
+        return claude_messages
 
     async def listen(self) -> str:
         """Listen for user speech and convert to text"""
@@ -388,7 +376,7 @@ class ClaudeCodeAssistant:
             prompt = COMPRESS_PROMPT.format(text=text)
 
             # Call OpenAI with GPT-4.1-mini to compress the text
-            response = client.chat.completions.create(
+            response = openai_client.chat.completions.create(
                 model="gpt-4.1-mini",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
@@ -432,7 +420,7 @@ class ClaudeCodeAssistant:
             compressed_text = await self.compress_speech(text)
 
             # Generate speech with compressed text
-            response = client.audio.speech.create(
+            response = openai_client.audio.speech.create(
                 model="tts-1",
                 voice=TTS_VOICE,
                 input=compressed_text,
@@ -485,7 +473,7 @@ class ClaudeCodeAssistant:
             console.print(f"[italic yellow]Text:[/italic yellow] {text}")
 
     async def process_message(self, message: str) -> Optional[str]:
-        """Process the user message and run Claude Code"""
+        """Process the user message and run Claude API"""
         log.info(f'Processing message: "{message}"')
 
         # Enhanced trigger word detection with better logging 
@@ -522,115 +510,95 @@ class ClaudeCodeAssistant:
             log.info(f"No trigger word detected in message")
             console.print(f"[yellow]No trigger word detected. Looking for: {', '.join(TRIGGER_WORDS)}[/yellow]")
             return None
+            
+        # At this point, a trigger word was found - proceed with processing
 
         # Add to conversation history
         self.conversation_history.append({"role": "user", "content": message})
 
-        # Prepare the prompt for Claude Code including conversation history
-        formatted_history = self.format_conversation_history()
-        prompt = CLAUDE_PROMPT.format(formatted_history=formatted_history)
-
-        # Execute Claude Code as a subprocess with improved flexibility
-        log.info("Starting Claude Code subprocess...")
+        # Format messages for Claude
+        claude_messages = self.format_messages_for_claude()
         
-        # Try to find Claude executable in different possible locations
-        claude_paths = [
-            "/Users/leegeyer/.claude/local/claude",
-            "/Users/leegeyer/.claude/bin/claude",
-            "claude"  # Rely on PATH if installed properly
+        # Debug the messages being sent
+        log.info(f"Formatted {len(claude_messages)} messages for Claude")
+        for i, msg in enumerate(claude_messages):
+            log.info(f"Message {i+1}: role={msg['role']}, content_length={len(msg['content'])}")
+        
+        console.print("\n[bold blue]🔄 Calling Claude API...[/bold blue]")
+        
+        # Show the message we're asking about
+        console.print(Panel(
+            f"[bold]Asking Claude:[/bold] {message}",
+            title="API Request",
+            border_style="blue"
+        ))
+
+        # List of models to try in case the primary one fails
+        models_to_try = [
+            CLAUDE_MODEL,  # Try the configured model first
+            "claude-3-sonnet-20240229",  # Try the specific version
+            "claude-3-sonnet",  # Try the generic name
+            "claude-3-opus-20240229",  # Try Opus if Sonnet fails
+            "claude-3-haiku-20240307"   # Try Haiku as last resort
         ]
         
-        # Find first available claude executable
-        claude_path = None
-        for path in claude_paths:
-            try:
-                # Check if path exists or if command is available on PATH
-                if os.path.exists(path) or os.system(f"which {path} > /dev/null 2>&1") == 0:
-                    claude_path = path
-                    log.info(f"Found Claude executable at: {path}")
-                    break
-            except:
-                continue
+        # Remove duplicates while preserving order
+        seen = set()
+        models_to_try = [m for m in models_to_try if not (m in seen or seen.add(m))]
         
-        if not claude_path:
-            log.error("Could not find Claude executable. Please install Claude CLI.")
-            return "I'm sorry, but I couldn't find the Claude CLI tool. Please make sure it's installed correctly."
+        last_error = None
         
-        cmd = [
-            claude_path,
-            "-p",
-            prompt,
-            "--allowedTools",
-        ] + DEFAULT_CLAUDE_TOOLS
-
-        console.print("\n[bold blue]🔄 Running Claude Code...[/bold blue]")
-
-        try:
-            # Play a short sound to indicate we're thinking
-            console.print("[cyan]Running Claude Code in CLI mode...[/cyan]")
-            
-            # Create a small audio file to indicate processing is happening
+        # Try each model in sequence
+        for model in models_to_try:
             try:
-                # Generate a quick processing sound with OpenAI TTS
-                thinking_response = client.audio.speech.create(
-                    model="tts-1",
-                    voice=TTS_VOICE,
-                    input="Let me think about that...",
-                    speed=1.0,
+                # Call Claude API with verbose logging
+                log.info(f"Sending request to Claude API with model {model}")
+                console.print(f"[dim]Calling Claude API with model {model} ({len(claude_messages)} messages)...[/dim]")
+                
+                response = anthropic_client.messages.create(
+                    model=model,
+                    max_tokens=1024,
+                    temperature=0.7,
+                    messages=claude_messages,
                 )
                 
-                # Save to temporary file
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-                    temp_filename = temp_file.name
-                    thinking_response.stream_to_file(temp_filename)
-                    
-                # Play the "thinking" audio
-                data, samplerate = sf.read(temp_filename)
-                sd.play(data, samplerate, device=OUTPUT_DEVICE_INDEX)
-                sd.wait()
+                # Extract the response text
+                response_text = response.content[0].text
                 
-                # Clean up temp file
-                os.unlink(temp_filename)
-            except Exception as audio_error:
-                # Don't fail if audio generation fails, just log it
-                log.warning(f"Failed to play thinking sound: {audio_error}")
-            
-            # Use simple subprocess.run for synchronous execution
-            process = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                log.info(f"Claude API responded with {len(response_text)} characters")
 
-            # Get the response
-            response = process.stdout
+                # Display the response
+                console.print(Panel(title=f"Claude Response ({model})", renderable=Markdown(response_text)))
 
-            log.info(f"Claude Code succeeded, output length: {len(response)}")
+                # Add to conversation history
+                self.conversation_history.append({"role": "assistant", "content": response_text})
 
-            # Display the response
-            console.print(Panel(title="Claude Code Response", renderable=Markdown(response)))
+                # Save the updated conversation history
+                self.save_conversation_history()
 
-            # Add to conversation history
-            self.conversation_history.append({"role": "assistant", "content": response})
+                return response_text
 
-            # Save the updated conversation history
-            self.save_conversation_history()
+            except Exception as e:
+                error_msg = f"Claude API request with model {model} failed: {str(e)}"
+                log.warning(error_msg)
+                console.print(f"[yellow]Model {model} failed, trying next model if available...[/yellow]")
+                last_error = e
+                continue
+        
+        # If we got here, all models failed
+        error_msg = f"All Claude API models failed. Last error: {str(last_error)}"
+        log.error(error_msg)
+        console.print(f"[bold red]{error_msg}[/bold red]")
 
-            return response
+        error_response = "I'm sorry, but I encountered an error while processing your request. Please try again."
+        self.conversation_history.append(
+            {"role": "assistant", "content": error_response}
+        )
 
-        except subprocess.CalledProcessError as e:
-            error_msg = f"Claude Code failed with exit code: {e.returncode}"
-            log.error(f"{error_msg}\nError: {e.stderr[:500]}...")
-            console.print(f"[bold red]Error running Claude Code: {e.returncode}[/bold red]")
-            
-            if e.stderr:
-                console.print(f"[yellow]Error details: {e.stderr[:200]}...[/yellow]")
+        # Save the updated conversation history even when there's an error
+        self.save_conversation_history()
 
-            error_response = "I'm sorry, but I encountered an error while processing your request. Please try again."
-            self.conversation_history.append(
-                {"role": "assistant", "content": error_response}
-            )
-
-            # Save the updated conversation history even when there's an error
-            self.save_conversation_history()
-
-            return error_response
+        return error_response
 
     async def conversation_loop(self):
         """Run the main conversation loop"""
@@ -638,11 +606,11 @@ class ClaudeCodeAssistant:
 
         console.print(
             Panel.fit(
-                "[bold magenta]🎤 Claude Code Voice Assistant Ready[/bold magenta]\n"
+                "[bold magenta]🎤 Claude Voice Assistant Ready[/bold magenta]\n"
                 f"Speak to interact. Include one of these trigger words to activate: {', '.join(TRIGGER_WORDS)}.\n"
-                f"The assistant will listen, process with Claude Code CLI, and respond using voice '{TTS_VOICE}'.\n"
+                f"The assistant will listen, process with Claude API, and respond using voice '{TTS_VOICE}'.\n"
                 f"STT model: {STT_MODEL}\n"
-                f"Claude tools: {', '.join(DEFAULT_CLAUDE_TOOLS)}\n"
+                f"Claude model: {CLAUDE_MODEL} (Sonnet)\n"
                 f"Input device: {INPUT_DEVICE} (index: {INPUT_DEVICE_INDEX})\n"
                 f"Output device: {OUTPUT_DEVICE} (index: {OUTPUT_DEVICE_INDEX})\n"
                 f"Conversation ID: {self.conversation_id}\n"
@@ -704,7 +672,7 @@ class ClaudeCodeAssistant:
                         message_words = user_text.lower().split()
                         log.info(f"Words in transcribed message: {message_words}")
                         
-                        # Process message through Claude Code
+                        # Process message through Claude
                         response = await self.process_message(user_text)
 
                         # Only speak if we got a response (trigger word was detected)
@@ -764,10 +732,10 @@ class ClaudeCodeAssistant:
 
 async def main():
     """Main entry point for the assistant"""
-    log.info("Starting Claude Code Voice Assistant")
+    log.info("Starting Claude Voice Assistant")
 
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Voice-enabled Claude Code assistant")
+    parser = argparse.ArgumentParser(description="Voice-enabled Claude assistant")
     parser.add_argument(
         "--id",
         "-i",
@@ -780,16 +748,10 @@ async def main():
         type=str,
         help="Initial prompt to process immediately (will be prefixed with trigger word)",
     )
-    parser.add_argument(
-        "--text-only",
-        "-t",
-        action="store_true",
-        help="Run in text-only mode (no voice input/output)",
-    )
     args = parser.parse_args()
 
     # Create assistant instance with conversation ID and initial prompt
-    assistant = ClaudeCodeAssistant(conversation_id=args.id, initial_prompt=args.prompt)
+    assistant = ClaudeVoiceAssistant(conversation_id=args.id, initial_prompt=args.prompt)
 
     # Show some helpful information about the conversation
     if args.id:
@@ -827,67 +789,12 @@ async def main():
         # Process the initial prompt
         response = await assistant.process_message(initial_prompt)
 
-        # Speak the response if there is one and not in text-only mode
-        if response and not args.text_only:
+        # Speak the response if there is one
+        if response:
             await assistant.speak(response)
 
-    # Run the conversation loop or enter text-only mode
-    if args.text_only:
-        await text_only_conversation_loop(assistant)
-    else:
-        await assistant.conversation_loop()
-
-async def text_only_conversation_loop(assistant):
-    """Run a text-only conversation loop"""
-    log.info("Starting text-only conversation loop")
-
-    console.print(
-        Panel.fit(
-            "[bold magenta]🖋️ Claude Code Text-Only Assistant Ready[/bold magenta]\n"
-            f"Type to interact. Include one of these trigger words to activate: {', '.join(TRIGGER_WORDS)}.\n"
-            f"The assistant will process with Claude Code CLI and respond as text.\n"
-            f"Claude tools: {', '.join(DEFAULT_CLAUDE_TOOLS)}\n"
-            f"Conversation ID: {assistant.conversation_id}\n"
-            f"Saving conversation to: {assistant.conversation_file}\n"
-            f"Type 'exit' or press Ctrl+C to exit."
-        )
-    )
-
-    try:
-        while True:
-            try:
-                console.print("[bold green]Your message:[/bold green] ", end="")
-                user_text = input()
-                
-                if user_text.lower() == 'exit':
-                    console.print("[bold yellow]Exiting the assistant...[/bold yellow]")
-                    break
-                    
-                if not user_text:
-                    console.print("[yellow]Empty input. Try again.[/yellow]")
-                    continue
-
-                response = await assistant.process_message(user_text)
-
-                # Only respond if we got a response (trigger word was detected)
-                if not response:
-                    # If no trigger word, explain and continue
-                    console.print(
-                        f"[yellow]No trigger word detected. Please include one of these words: {', '.join(TRIGGER_WORDS)}.[/yellow]"
-                    )
-            except EOFError:
-                console.print("[bold red]Input error. Please try again or type 'exit'.[/bold red]")
-                continue
-
-    except KeyboardInterrupt:
-        console.print("\n[bold red]Stopping assistant...[/bold red]")
-        log.info("Text-only conversation loop stopped by keyboard interrupt")
-    except Exception as e:
-        console.print(f"[bold red]Error:[/bold red] {str(e)}")
-        log.error(f"Error in text-only conversation loop: {str(e)}", exc_info=True)
-    finally:
-        console.print("[bold red]Assistant stopped.[/bold red]")
-        log.info("Text-only conversation loop ended")
+    # Run the conversation loop
+    await assistant.conversation_loop()
 
 
 if __name__ == "__main__":
