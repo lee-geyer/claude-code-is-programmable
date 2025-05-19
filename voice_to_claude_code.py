@@ -47,8 +47,8 @@ Run the script:
 ./voice_to_claude_code.py
 ```
 
-Speak to the assistant using the trigger word "claude" in your query.
-For example: "Hey claude, create a simple hello world script"
+Speak to the assistant using the trigger word "Athena" in your query.
+For example: "Hey Athena, create a simple hello world script"
 
 Press Ctrl+C to exit.
 """
@@ -79,7 +79,7 @@ from RealtimeSTT import AudioToTextRecorder
 import logging
 
 # Configuration - default values
-TRIGGER_WORDS = ["claude", "cloud", "sonnet", "sonny"]  # List of possible trigger words
+TRIGGER_WORDS = ["athena"]  # List of possible trigger words
 STT_MODEL = "small.en"  # Options: tiny.en, base.en, small.en, medium.en, large-v2
 TTS_VOICE = "nova"  # Options: alloy, echo, fable, onyx, nova, shimmer
 DEFAULT_CLAUDE_TOOLS = [
