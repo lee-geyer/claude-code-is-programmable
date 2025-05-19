@@ -1,1 +1,0 @@
-aider --message "make a hello.js script that prints hello" hello.js

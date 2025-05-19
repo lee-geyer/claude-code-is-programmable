@@ -1,1 +1,0 @@
-claude -p "make a hello.js script that prints hello" --allowedTools "Write" "Edit"
