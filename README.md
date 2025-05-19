@@ -2,7 +2,7 @@
 
 This repository provides a simple voice-enabled interface for [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview).
 
-The script `voice_to_claude_code.py` listens for a trigger word (default `"claude"`) and sends your spoken request to Claude Code, then plays the response using OpenAI TTS.
+The script `voice_to_claude_code.py` listens for a trigger word (default `"Athena"`) and sends your spoken request to Claude Code, then plays the response using OpenAI TTS.
 
 This project is forked from [indydevdan's `claude-code-is-programmable`](https://github.com/indydevdan/claude-code-is-programmable). It was trimmed using OpenAI Codex to focus on the voice agent for Claude Code.
 
